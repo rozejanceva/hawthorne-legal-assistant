@@ -1,4 +1,5 @@
-.env
+*.db-shm
+*.db-wal.env
 *.db
 credentials.json
 token.json
