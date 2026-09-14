@@ -5,8 +5,6 @@ RUN useradd --create-home --uid 1000 appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
-COPY tests ./tests
-COPY pytest.ini .
 
 FROM node:22-alpine AS frontend
 WORKDIR /web
@@ -19,4 +17,4 @@ FROM api AS production
 COPY --from=frontend /web/dist ./frontend/dist
 USER appuser
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*' "]
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*' --no-server-header"]

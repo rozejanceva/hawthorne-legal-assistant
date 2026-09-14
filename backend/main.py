@@ -6,16 +6,24 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import select, text
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.assistant import respond
 from backend.config import ROOT_DIR, get_settings
 from backend.database.models import Appointment, SessionLocal, init_db
-from backend.middleware import RateLimitMiddleware
+from backend.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
 from backend.scheduler import CONSULTATIONS, BookingConflict, book, duration_for, is_available, suggest_slots
-from backend.schemas import AppointmentOut, AvailabilityRequest, BookingRequest, ChatRequest, ChatResponse, LoginRequest
+from backend.schemas import (
+    AppointmentOut,
+    AvailabilityRequest,
+    BookingConfirmation,
+    BookingRequest,
+    ChatRequest,
+    ChatResponse,
+    LoginRequest,
+)
 from backend.timeutil import as_office_time
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,7 +40,14 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    application = FastAPI(title=settings.app_name, lifespan=lifespan)
+    application = FastAPI(
+        title=settings.app_name,
+        lifespan=lifespan,
+        docs_url=None if settings.is_production else "/docs",
+        redoc_url=None if settings.is_production else "/redoc",
+        openapi_url=None if settings.is_production else "/openapi.json",
+    )
+    application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(RateLimitMiddleware)
     application.add_middleware(
         SessionMiddleware,
@@ -55,6 +70,12 @@ def create_app() -> FastAPI:
 
     @application.get("/healthz")
     def healthz():
+        try:
+            with SessionLocal() as session:
+                session.execute(text("SELECT 1"))
+        except Exception as exc:
+            logger.exception("Database readiness check failed")
+            raise HTTPException(status_code=503, detail="Database unavailable") from exc
         return {"status": "ok"}
 
     if FRONTEND_DIST.exists():
@@ -97,6 +118,7 @@ def public_config():
         "working_day_end": settings.working_day_end,
         "lunch_start": settings.lunch_start,
         "lunch_end": settings.lunch_end,
+        "slot_interval_minutes": settings.slot_interval_minutes,
         "consultations": CONSULTATIONS,
     }
 
@@ -122,20 +144,26 @@ def availability(payload: AvailabilityRequest):
             "available": False,
             "slots": [slot.isoformat() for slot in suggest_slots(start, payload.consultation_type)],
         }
-    except (ValueError, RuntimeError) as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("Availability provider failed")
+        raise HTTPException(status_code=503, detail="Scheduling service temporarily unavailable.") from exc
 
 
-@api.post("/appointments", response_model=AppointmentOut, status_code=status.HTTP_201_CREATED)
+@api.post("/appointments", response_model=BookingConfirmation, status_code=status.HTTP_201_CREATED)
 def create_appointment(payload: BookingRequest):
     try:
         return book(payload.client_name, str(payload.client_email), payload.consultation_type, payload.starts_at)
     except BookingConflict as exc:
         logger.info("Booking rejected: %s", exc)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (ValueError, RuntimeError) as exc:
+    except ValueError as exc:
         logger.info("Booking rejected: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("Booking provider failed")
+        raise HTTPException(status_code=503, detail="Scheduling service temporarily unavailable.") from exc
 
 
 @api.post("/admin/login")

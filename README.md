@@ -14,7 +14,7 @@ Production-ready consultation scheduler: React booking site, FastAPI API, Postgr
 
 ## Run locally
 
-1. `python -m venv .venv` then `.venv\Scripts\pip install -r requirements.txt`
+1. `python -m venv .venv` then `.venv\Scripts\pip install -r requirements-dev.txt`
 2. Copy `.env.example` to `.env`. Set `ADMIN_PASSWORD` and leave `APP_ENV=development`.
 3. `uvicorn backend.main:app --reload`
 4. In `frontend`: `npm install` then `npm run dev`
@@ -49,6 +49,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 The app is served at `http://<host>/`. Health check: `/healthz`. Appointments: `/admin`.
 
 Production refuses to start with SQLite, a default secret, a weak admin password, or browser-based Google OAuth.
+
+The production API also validates database readiness at `/healthz`, rejects past and off-grid appointment times, serializes overlapping booking decisions in PostgreSQL, hides API documentation, and adds browser security headers.
 
 ## Publish on GitHub and get a real URL
 
@@ -91,6 +93,9 @@ In the Render web service, open **Settings > Custom Domains**, add the domain yo
 - Configure Google Calendar and SMTP using the instructions above if the office needs calendar events and confirmation email.
 - Replace the placeholder Hawthorne Legal name, contact details, privacy notice, and legal disclaimer with the client's approved content.
 - Use a paid PostgreSQL/web plan for a real business. Free hosting can sleep, has operational limits, and should be treated as a demonstration environment.
+- Rotate any database password or API key that has ever been pasted into chat, logs, screenshots, or a Git commit.
+- Arrange managed database backups and test restoring one before accepting real appointments.
+- Have the client approve the public wording, privacy notice, retention policy, booking workflow, office hours, and legal disclaimer.
 
 ## Security notes
 

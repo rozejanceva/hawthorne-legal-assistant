@@ -19,6 +19,6 @@ def test_office_timezone_from_utc():
 
 
 def test_suggests_slots_after_lunch_when_needed():
-    slots = suggest_slots(datetime(2026, 8, 26, 11, 45), "Initial Consultation")
+    slots = suggest_slots(datetime(2030, 8, 26, 11, 45), "Initial Consultation")
     assert slots
     assert slots[0].hour >= 13

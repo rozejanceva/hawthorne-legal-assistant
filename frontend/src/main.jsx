@@ -14,7 +14,7 @@ const formatSlot = (value) => new Intl.DateTimeFormat("en", {
   weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
 }).format(new Date(value));
 
-function ChatWidget({ officeLabel }) {
+function ChatWidget({ officeLabel, slotInterval }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([{ role: "bot", text: "Hello! I’m the virtual scheduling assistant. How can I help today?" }]);
   const [input, setInput] = useState("");
@@ -105,7 +105,7 @@ function ChatWidget({ officeLabel }) {
               <select aria-label="Consultation type" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                 {consultationTypes.map(([type, duration]) => <option key={type} value={type}>{type} — {duration}</option>)}
               </select>
-              <input required aria-label="Preferred date and time" type="datetime-local" step="60" value={form.preferred} onChange={(e) => setForm({ ...form, preferred: e.target.value })} />
+              <input required aria-label="Preferred date and time" type="datetime-local" step={slotInterval * 60} value={form.preferred} onChange={(e) => setForm({ ...form, preferred: e.target.value })} />
               <button className="chat-book" disabled={loading}>Check available times</button>
               {slots.map((slot) => (
                 <label className="chat-slot" key={slot}>
@@ -135,9 +135,13 @@ function App() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [officeLabel, setOfficeLabel] = useState("Europe/Skopje");
+  const [slotInterval, setSlotInterval] = useState(30);
 
   useEffect(() => {
-    api("/public-config").then((data) => setOfficeLabel(data.timezone)).catch(() => {});
+    api("/public-config").then((data) => {
+      setOfficeLabel(data.timezone);
+      setSlotInterval(data.slot_interval_minutes || 30);
+    }).catch(() => {});
   }, []);
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -226,7 +230,7 @@ function App() {
               </select>
             </label>
             <label>Preferred date and time
-              <input required type="datetime-local" step="60" value={form.preferred} onChange={(e) => update("preferred", e.target.value)} />
+              <input required type="datetime-local" step={slotInterval * 60} value={form.preferred} onChange={(e) => update("preferred", e.target.value)} />
             </label>
             <p className="field-hint">Enter the time you want in the office timezone ({officeLabel}). Seconds are not used.</p>
             <button className="button primary" disabled={busy} type="submit">{busy ? "Checking…" : "Check availability"}</button>
@@ -250,7 +254,7 @@ function App() {
         <span>© {new Date().getFullYear()} Hawthorne Legal</span>
         <a className="footer-admin" href="/admin">Office login</a>
       </footer>
-      <ChatWidget officeLabel={officeLabel} />
+      <ChatWidget officeLabel={officeLabel} slotInterval={slotInterval} />
     </>
   );
 }

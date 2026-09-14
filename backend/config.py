@@ -1,7 +1,9 @@
 from functools import lru_cache
+from datetime import time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,7 +23,7 @@ class Settings(BaseSettings):
     working_day_end: str = "17:00"
     lunch_start: str = "12:00"
     lunch_end: str = "13:00"
-    slot_interval_minutes: int = 30
+    slot_interval_minutes: int = Field(default=30, ge=5, le=240)
     calendar_mode: str = "demo"
     google_calendar_id: str = "primary"
     google_credentials_file: str = "credentials.json"
@@ -37,7 +39,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_use_tls: bool = True
-    rate_limit_per_minute: int = 30
+    rate_limit_per_minute: int = Field(default=30, ge=1, le=1000)
     secure_cookies: bool = False
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
@@ -72,15 +74,35 @@ class Settings(BaseSettings):
             raise ValueError("CALENDAR_MODE must be demo or google.")
         return mode
 
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_exist(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("TIMEZONE must be a valid IANA timezone name.") from exc
+        return value
+
     @model_validator(mode="after")
     def validate_production_safety(self) -> "Settings":
+        try:
+            day_start = time.fromisoformat(self.working_day_start)
+            day_end = time.fromisoformat(self.working_day_end)
+            lunch_start = time.fromisoformat(self.lunch_start)
+            lunch_end = time.fromisoformat(self.lunch_end)
+        except ValueError as exc:
+            raise ValueError("Working hours must use HH:MM format.") from exc
+        if not (day_start < lunch_start < lunch_end < day_end):
+            raise ValueError("Working hours must contain a valid lunch break inside the working day.")
         if self.is_production:
-            if self.secret_key in {"", "dev-only-change-me"}:
-                raise ValueError("Set a strong SECRET_KEY before running in production.")
+            if self.secret_key in {"", "dev-only-change-me"} or len(self.secret_key) < 32:
+                raise ValueError("Set a strong SECRET_KEY (32+ characters) before running in production.")
             if self.admin_password in WEAK_PASSWORDS or len(self.admin_password) < 12:
                 raise ValueError("Set a strong ADMIN_PASSWORD (12+ characters) before production.")
             if self.is_sqlite:
                 raise ValueError("Use PostgreSQL (DATABASE_URL) in production.")
+            if not self.database_url.startswith(("postgresql://", "postgresql+psycopg2://")):
+                raise ValueError("DATABASE_URL must use PostgreSQL in production.")
         if self.calendar_mode == "google" and self.is_production and self.google_allow_browser_oauth:
             raise ValueError("Disable GOOGLE_ALLOW_BROWSER_OAUTH in production; use a stored refresh token.")
         return self

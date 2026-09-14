@@ -25,6 +25,14 @@ class AvailabilityRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1500)
 
+    @field_validator("message")
+    @classmethod
+    def message_must_have_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Enter a message.")
+        return value
+
 
 class ChatResponse(BaseModel):
     message: str
@@ -35,6 +43,14 @@ class BookingRequest(BaseModel):
     client_email: EmailStr
     consultation_type: str
     starts_at: datetime
+
+    @field_validator("client_name")
+    @classmethod
+    def name_must_have_text(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Enter your full name.")
+        return value
 
     @field_validator("starts_at")
     @classmethod
@@ -55,5 +71,13 @@ class AppointmentOut(BaseModel):
     starts_at: datetime
     ends_at: datetime
     calendar_event_id: str
+
+    model_config = {"from_attributes": True}
+
+
+class BookingConfirmation(BaseModel):
+    consultation_type: str
+    starts_at: datetime
+    ends_at: datetime
 
     model_config = {"from_attributes": True}

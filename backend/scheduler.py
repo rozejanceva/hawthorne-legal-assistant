@@ -5,7 +5,7 @@ from sqlalchemy import select, text
 
 from backend.config import get_settings
 from backend.database.models import Appointment, SessionLocal
-from backend.timeutil import as_office_time, as_utc
+from backend.timeutil import as_office_time, as_utc, office_zone
 from backend.tools.calendar import calendar_service
 from backend.tools.emailer import send_booking_confirmation
 
@@ -48,8 +48,20 @@ def _overlaps(existing_start: datetime, existing_end: datetime, start: datetime,
     return as_utc(existing_start) < as_utc(end) and as_utc(existing_end) > as_utc(start)
 
 
-def is_available(start: datetime, minutes: int, session=None) -> bool:
+def validate_bookable_start(start: datetime) -> datetime:
+    settings = get_settings()
     start = as_office_time(start)
+    if start.second or start.microsecond:
+        raise ValueError("Please choose a time with minute precision; seconds are not supported.")
+    if start <= datetime.now(office_zone()):
+        raise ValueError("Please choose a future appointment time.")
+    if start.minute % settings.slot_interval_minutes:
+        raise ValueError(f"Appointments must start on a {settings.slot_interval_minutes}-minute interval.")
+    return start
+
+
+def is_available(start: datetime, minutes: int, session=None) -> bool:
+    start = validate_bookable_start(start)
     end = start + timedelta(minutes=minutes)
     if not is_working_time(start, end):
         return False
@@ -71,11 +83,15 @@ def is_available(start: datetime, minutes: int, session=None) -> bool:
 def suggest_slots(preferred_start: datetime, consultation_type: str, count: int = 3) -> list[datetime]:
     minutes = duration_for(consultation_type)
     interval = get_settings().slot_interval_minutes
-    candidate = as_office_time(preferred_start).replace(second=0, microsecond=0)
+    now = datetime.now(office_zone())
+    candidate = max(as_office_time(preferred_start), now).replace(second=0, microsecond=0)
     extra = (-candidate.minute) % interval
     candidate += timedelta(minutes=extra)
+    if candidate <= now:
+        candidate += timedelta(minutes=interval)
     slots: list[datetime] = []
-    for _ in range(96):
+    attempts = max(1, (14 * 24 * 60) // interval)
+    for _ in range(attempts):
         if is_available(candidate, minutes):
             slots.append(candidate)
             if len(slots) == count:
@@ -84,25 +100,26 @@ def suggest_slots(preferred_start: datetime, consultation_type: str, count: int 
     return slots
 
 
-def _acquire_lock(session, start: datetime) -> None:
+def _acquire_lock(session) -> None:
     settings = get_settings()
     if settings.is_sqlite:
         session.execute(text("SELECT 1"))
         return
-    key = int(as_utc(start).timestamp()) % (2**31 - 1)
-    session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+    # One transaction-scoped lock serializes booking decisions, including
+    # partially overlapping appointments that have different start times.
+    session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": 1212246849})
 
 
 def book(client_name: str, client_email: str, consultation_type: str, start: datetime) -> Appointment:
     minutes = duration_for(consultation_type)
-    start = as_office_time(start).replace(second=0, microsecond=0)
+    start = validate_bookable_start(start)
     end = start + timedelta(minutes=minutes)
     utc_start, utc_end = as_utc(start), as_utc(end)
     event_id = None
     try:
         with SessionLocal() as session:
             with session.begin():
-                _acquire_lock(session, start)
+                _acquire_lock(session)
                 if not is_available(start, minutes, session=session):
                     raise BookingConflict("This time is no longer available. Please choose another slot.")
                 placeholder = f"pending-{uuid4()}"
